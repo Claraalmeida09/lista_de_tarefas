@@ -27,11 +27,66 @@ class Home extends StatefulWidget {
 }
 
 class _HomeState extends State<Home> {
-  List _shopList = ['Arroz', 'Feijão'];
+  final _formKey = GlobalKey<FormState>();
+  final _scaffoldKey = GlobalKey<ScaffoldState>();
+
+  final _toDoController = TextEditingController();
+
+  List _shopList = [];
+
+  Map<String, dynamic> _lastRemoved;
+
+  //para sabermos de que posição foi deletado
+  int _lastRemovedPos;
+
+  @override
+  void initState() {
+    super.initState();
+    _readData().then((data) {
+      setState(() {
+        _shopList = json.decode(data);
+      });
+    });
+  }
+
+  // criar função para adicionar item na lista
+  void _addToDo() {
+    if(_formKey.currentState.validate()){
+      _formKey.currentState.save();
+      setState(() {
+        //pegar o que estiver escrito no inserir item e add na lista
+        Map<String, dynamic> newShop = Map();
+        newShop['title'] = _toDoController.text;
+        _toDoController.text = '';
+        newShop['ok'] = false;
+        _shopList.add(newShop);
+        _saveData();
+      });
+    }
+
+  }
+
+  Future<Null> _refresh() async {
+    await Future.delayed(Duration(seconds: 1));
+
+    setState(() {
+      _shopList.sort((a, b) {
+        if (a['ok'] && !b['ok'])
+          return 1;
+        else if (!a['ok'] && b['ok'])
+          return -1;
+        else
+          return 0;
+      });
+      _saveData();
+    });
+    return null;
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+        key: _scaffoldKey,
         backgroundColor: Colors.deepOrange[100],
         appBar: AppBar(
           title: Text('Lista de Compras'),
@@ -42,47 +97,112 @@ class _HomeState extends State<Home> {
           children: [
             // responsável por dar o espaçamento onde será inserido os dados
             Container(
-              padding: EdgeInsets.fromLTRB(17, 4, 7, 1),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      decoration: InputDecoration(
-                          labelText: 'Inserir Item',
-                          labelStyle: TextStyle(color: Colors.deepOrange[900])),
-                      style: TextStyle(color: Colors.deepOrange[900]),
-                    ),
+                padding: EdgeInsets.fromLTRB(17, 4, 7, 1),
+                child: Form(
+                  key: _formKey,
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: TextFormField(
+                          textCapitalization: TextCapitalization.sentences,
+                          controller: _toDoController,
+                          validator: (value) {
+                            if (value.isEmpty) {
+                              return 'Insira um item';
+                            }
+                          },
+                          decoration: InputDecoration(
+                              labelText: 'Inserir Item',
+                              labelStyle:
+                                  TextStyle(color: Colors.deepOrange[900])),
+                          style: TextStyle(color: Colors.deepOrange[900]),
+                        ),
+                      ),
+                      SizedBox(
+                        width: 4,
+                      ),
+                      RaisedButton(
+                          color: Colors.deepOrange[900],
+                          //Chamando a função add do botão
+                          onPressed: _addToDo,
+                          child: Icon(
+                            Icons.add,
+                            color: Colors.white,
+                          )),
+                    ],
                   ),
-                  SizedBox(width: 4,),
-                  RaisedButton(
-                      color: Colors.deepOrange[900],
-                      onPressed: () {},
-                      child: Icon(
-                        Icons.add,
-                        color: Colors.white,
-                      )),
-                ],
-              ),
-            ),
+                )),
             // Expanded é utilizado quando o widget não sabe qual o comprimento terá
             Expanded(
                 //ListView - widget que cria listas
                 // builder é um construtor que a lista seja construída conforme for rodando ela
-                child: ListView.builder(
-                    padding: EdgeInsets.only(top: 10.0),
-                    itemCount: _shopList.length,
-                    itemBuilder: (context, index) {
-                      return CheckboxListTile(
-                        title: Text( _shopList[index]['title']),
-                        value: _shopList[index]['ok'],
-                        secondary: CircleAvatar(
-                          child: Icon(_shopList[index]['ok'] ?
-                          Icons.check : Icons.error),
-                        ),
-                      );
-                    }))
+                child: RefreshIndicator(
+                    child: ListView.builder(
+                        padding: EdgeInsets.only(top: 10.0),
+                        itemCount: _shopList.length,
+                        itemBuilder: buildItem),
+                    onRefresh: _refresh))
           ],
         ));
+  }
+
+  Widget buildItem(BuildContext context, int index) {
+    return Dismissible(
+      key: Key(DateTime.now().millisecondsSinceEpoch.toString()),
+      background: Container(
+        color: Colors.red,
+        // add o ícone do tipo align para que ele não fique centralizado,
+        // responsável pelo alinhamento no lado esquerdo
+        child: Align(
+          alignment: Alignment(-0.9, 0.0),
+          child: Icon(
+            Icons.delete,
+            color: Colors.white,
+          ),
+        ),
+      ),
+      direction: DismissDirection.startToEnd,
+      child: CheckboxListTile(
+        activeColor: Colors.deepOrange[900],
+        title: Text(_shopList[index]['title']),
+        value: _shopList[index]['ok'],
+        secondary: CircleAvatar(
+          backgroundColor: Colors.deepOrange[900],
+          child: Icon(_shopList[index]['ok'] ? Icons.check : Icons.error),
+          //chama uma função quando há variação true ou falso
+        ),
+        onChanged: (c) {
+          setState(() {
+            _shopList[index]['ok'] = c;
+            _saveData();
+          });
+        },
+      ),
+      onDismissed: (direction) {
+        setState(() {
+          _lastRemoved = Map.from(_shopList[index]);
+          _lastRemovedPos = index;
+          _shopList.removeAt(index);
+
+          _saveData();
+
+          final snack = SnackBar(
+            content: Text('Item \"${_lastRemoved['title']}\" removido!'),
+            action: SnackBarAction(
+                label: 'Desfazer',
+                onPressed: () {
+                  setState(() {
+                    _shopList.insert(_lastRemovedPos, _lastRemoved);
+                    _saveData();
+                  });
+                }),
+            duration: Duration(seconds: 2),
+          );
+          Scaffold.of(context).removeCurrentSnackBar();
+          Scaffold.of(context).showSnackBar(snack);
+        });
+      },
+    );
   }
 
   //Função para armazenar a lista de dados
